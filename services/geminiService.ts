@@ -2,19 +2,24 @@
 import { GoogleGenAI } from "@google/genai";
 
 export const getAIInsights = async (stats: any) => {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const prompt = `
-      As a real estate marketing analyst, analyze these lead statistics:
-      - Total Raw Leads: ${stats.funnel.raw}
-      - Unique Leads: ${stats.funnel.unique}
-      - Leads to Booking Conversion: ${(stats.funnel.booking / stats.funnel.raw * 100).toFixed(2)}%
-      - Top Performing Source: ${stats.topSource.source} (${stats.topSource.count} leads)
-      - Top Agent: ${stats.topAgent.name} (Converted ${stats.topAgent.bookings} bookings)
-      - Marketing Budget Effectiveness: Based on the source distribution.
+  // Safe access to process.env
+  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
 
-      Provide 3 actionable insights in Indonesian language to improve the sales performance and lead quality. 
-      Keep it professional, data-driven, and concise.
+  if (!apiKey) {
+    return "AI Insights belum aktif. Tunggu sebentar atau hubungkan API Key Anda.";
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const prompt = `
+      Anda adalah seorang Senior Real Estate Analyst. Analisis data penjualan properti berikut:
+      - Total Leads: ${stats.funnel.raw}
+      - Unique Leads: ${stats.funnel.unique}
+      - Conversion rate Booking: ${(stats.funnel.booking / stats.funnel.raw * 100).toFixed(2)}%
+      - Top Source: ${stats.topSource.source}
+      - Top Agent: ${stats.topAgent?.name || 'Unknown'} (Converted ${stats.topAgent?.bookings || 0} units)
+
+      Berikan 3 poin insight strategis dalam Bahasa Indonesia yang singkat, padat, dan profesional untuk meningkatkan penjualan bulan depan.
     `;
 
     const response = await ai.models.generateContent({
@@ -22,9 +27,9 @@ export const getAIInsights = async (stats: any) => {
       contents: prompt,
     });
 
-    return response.text;
+    return response.text || "Insight tidak dapat digenerate saat ini.";
   } catch (error) {
     console.error("AI Insights Error:", error);
-    return "Maaf, sistem AI sedang tidak tersedia saat ini untuk memberikan analisis otomatis.";
+    return "Gagal memuat analisis AI. Pastikan kuota API Key tersedia.";
   }
 };

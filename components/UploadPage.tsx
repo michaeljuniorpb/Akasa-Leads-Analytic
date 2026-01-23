@@ -32,6 +32,12 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
     
     const processData = async (rawRows: any[]) => {
       try {
+        if (!rawRows || rawRows.length === 0) {
+           setError('File kosong atau tidak terbaca.');
+           setLoading(false);
+           return;
+        }
+
         setSyncStatus('Memetakan kolom data...');
         const mapped = rawRows.map(mapRawToLead);
         
@@ -41,10 +47,10 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
         onDataLoaded(mapped);
         setSuccess(true);
         setSyncStatus('Selesai!');
-        setTimeout(() => navigate('/'), 1500);
+        setTimeout(() => navigate('/'), 1200);
       } catch (err) {
-        console.error(err);
-        setError('Gagal menyimpan data ke Cloud. Pastikan koneksi internet stabil.');
+        console.error("Upload process error:", err);
+        setError('Gagal sinkronisasi ke Cloud. Cek koneksi internet Anda.');
       } finally {
         setLoading(false);
       }
@@ -54,8 +60,10 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
+        worker: false, // Penting: Jangan gunakan worker di preview environment
         complete: (results) => processData(results.data),
-        error: () => {
+        error: (err) => {
+          console.error("PapaParse error:", err);
           setError('Gagal membaca file CSV.');
           setLoading(false);
         }
@@ -71,6 +79,7 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
           const data = XLSX.utils.sheet_to_json(ws);
           processData(data);
         } catch (err) {
+          console.error("XLSX error:", err);
           setError('Gagal memproses file Excel.');
           setLoading(false);
         }
@@ -81,13 +90,13 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
       };
       reader.readAsBinaryString(file);
     } else {
-      setError('Format file tidak didukung. Gunakan .csv atau .xlsx');
+      setError('Format tidak didukung. Gunakan .csv atau .xlsx');
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto mt-12">
+    <div className="max-w-2xl mx-auto mt-12 px-4">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-8 text-center">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -95,8 +104,7 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
           </div>
           <h2 className="text-2xl font-bold text-slate-800 mb-2">Upload & Sync</h2>
           <p className="text-slate-500 mb-8">
-            Data yang diupload akan otomatis tersinkronisasi dengan database cloud<br/>
-            untuk analisis tim secara real-time.
+            Data akan otomatis tersinkronisasi dengan database cloud.
           </p>
 
           <div className="relative group">
@@ -120,7 +128,7 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
               ) : success ? (
                 <>
                   <CheckCircle2 className="text-green-600" size={40} />
-                  <span className="font-medium text-green-700">Berhasil Sinkron! Mengalihkan...</span>
+                  <span className="font-medium text-green-700">Sinkronisasi Berhasil!</span>
                 </>
               ) : (
                 <>
@@ -129,9 +137,9 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
                     <FileText className="text-blue-600" size={32} />
                   </div>
                   <div className="text-sm font-medium text-slate-700">
-                    Klik atau tarik file CSV/Excel
+                    Klik atau tarik file CSV/Excel ke sini
                   </div>
-                  <p className="text-xs text-slate-400">Database akan diperbarui di Cloud</p>
+                  <p className="text-xs text-slate-400">Pastikan kolom Nama Leads, Agent, dan Cust ID tersedia</p>
                 </>
               )}
             </div>
@@ -143,13 +151,6 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
               {error}
             </div>
           )}
-        </div>
-
-        <div className="bg-slate-50 px-8 py-6 border-t border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Informasi Sistem:</h3>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            Sistem menggunakan **Firebase Cloud Firestore** untuk penyimpanan. Pastikan kolom "Cust ID", "Agent", dan "Status leads" terisi dengan benar agar AI dapat memberikan analisis yang akurat.
-          </p>
         </div>
       </div>
     </div>
