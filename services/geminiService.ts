@@ -2,11 +2,13 @@
 import { GoogleGenAI } from "@google/genai";
 
 export const getAIInsights = async (stats: any) => {
-  // Safe access to process.env
-  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
+  // Vite menggunakan import.meta.env untuk environment variables
+  // Pastikan di Vercel Anda menambahkan variable bernama VITE_API_KEY
+  // Atau jika menggunakan sistem sandbox ini, tetap gunakan process.env
+  const apiKey = (import.meta as any).env?.VITE_API_KEY || (typeof process !== 'undefined' ? process.env.API_KEY : null);
 
   if (!apiKey) {
-    return "AI Insights belum aktif. Tunggu sebentar atau hubungkan API Key Anda.";
+    return "AI Insights belum aktif. Silakan tambahkan API Key di Environment Variables.";
   }
 
   try {
@@ -30,6 +32,6 @@ export const getAIInsights = async (stats: any) => {
     return response.text || "Insight tidak dapat digenerate saat ini.";
   } catch (error) {
     console.error("AI Insights Error:", error);
-    return "Gagal memuat analisis AI. Pastikan kuota API Key tersedia.";
+    return "Gagal memuat analisis AI. Pastikan API Key valid.";
   }
 };
