@@ -121,7 +121,7 @@ const App: React.FC = () => {
               </div>
             ) : (
               <Routes>
-                <Route path="/" element={<Dashboard leads={leads} />} />
+                <Route path="/" element={<Dashboard leads={leads} refreshData={loadInitialData} />} />
                 <Route path="/upload" element={<UploadPage onDataLoaded={handleDataLoaded} />} />
               </Routes>
             )}

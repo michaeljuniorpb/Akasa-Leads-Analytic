@@ -9,12 +9,15 @@ import {
 import { 
   Calendar, Search, X, BarChart3, Info, TrendingUp, CloudOff, 
   ShoppingBag, Snowflake, Flame, Ban, Trash2, HelpCircle,
-  Megaphone, Zap, CheckCircle2, Sparkles
+  Megaphone, Zap, CheckCircle2, Sparkles, RefreshCw
 } from 'lucide-react';
 import { getAIInsights } from '../services/geminiService';
+import { mapRawToLead } from '../services/dataProcessor';
+import { saveLeadsToCloud } from '../services/firebaseService';
 
 interface Props {
   leads: LeadData[];
+  refreshData?: () => Promise<void>;
 }
 
 const formatCurrency = (value: number) => {
@@ -26,10 +29,15 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-const Dashboard: React.FC<Props> = ({ leads }) => {
+const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
   const [aiAnalysis, setAiAnalysis] = useState<string>('Menunggu data untuk dianalisis...');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Check for stored Google Sheets settings
+  const storedSheetId = localStorage.getItem('gsheet_id');
+  const storedRange = localStorage.getItem('gsheet_range');
 
   const stats = useMemo(() => {
     if (leads.length === 0) return null;
@@ -153,6 +161,40 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
     }
   }, [stats]);
 
+  const handleRefreshFromSheets = async () => {
+    if (!storedSheetId || isRefreshing) return;
+    
+    setIsRefreshing(true);
+    try {
+      const response = await fetch(`/api/sheets?sheetId=${storedSheetId}&range=${storedRange || 'Sheet1!A1:Z'}`);
+      const data = await response.json();
+      
+      if (!response.ok) throw new Error(data.error || 'Sync failed');
+      
+      const { headers, rows } = data;
+      const dataObjects = rows.map((row: any[]) => {
+        const obj: any = {};
+        headers.forEach((h: string, i: number) => {
+          obj[h] = row[i];
+        });
+        return obj;
+      });
+
+      const mapped = dataObjects.map(mapRawToLead);
+      await saveLeadsToCloud(mapped);
+      
+      if (refreshData) {
+        await refreshData();
+      }
+      alert('Data Google Sheets berhasil diperbarui!');
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal refresh data: ' + err.message);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   if (leads.length === 0) return (
     <div className="h-[70vh] flex flex-col items-center justify-center text-center">
       <CloudOff size={64} className="text-slate-200 mb-6" />
@@ -178,11 +220,23 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
           <h1 className="text-3xl font-black text-slate-900">Leads Analyzer <span className="text-blue-600">Pro</span></h1>
           <p className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2 mt-1"><Info size={12}/> Campaign & Sales Intelligence</p>
         </div>
-        <div className="flex items-center gap-3 bg-white p-3 rounded-2xl shadow-sm border border-slate-200">
-          <Calendar size={18} className="text-blue-500 ml-2" />
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-semibold outline-none" />
-          <span className="text-slate-300">to</span>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-semibold outline-none" />
+        <div className="flex flex-wrap items-center gap-3">
+          {storedSheetId && (
+            <button 
+              onClick={handleRefreshFromSheets}
+              disabled={isRefreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl hover:bg-emerald-100 transition-all font-bold text-sm shadow-sm"
+            >
+              <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh from Sheets'}
+            </button>
+          )}
+          <div className="flex items-center gap-3 bg-white p-3 rounded-2xl shadow-sm border border-slate-200">
+            <Calendar size={18} className="text-blue-500 ml-2" />
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-semibold outline-none" />
+            <span className="text-slate-300">to</span>
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-semibold outline-none" />
+          </div>
         </div>
       </div>
 

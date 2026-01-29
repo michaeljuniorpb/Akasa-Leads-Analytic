@@ -1,18 +1,21 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-// Function to generate strategic insights using Gemini API
 export const getAIInsights = async (stats: any) => {
-  // Assume process.env.API_KEY is pre-configured and valid
+  const apiKey = process.env.API_KEY;
+  
+  if (!apiKey || apiKey === "undefined") {
+    console.error("API Key tidak terdeteksi di environment.");
+    return "Gagal memuat analisis AI. API Key belum terkonfigurasi di server.";
+  }
+
   if (!stats || !stats.funnel) {
     return "Data statistik belum lengkap untuk analisis.";
   }
 
   try {
-    // Initialize GenAI client with named parameter and direct environment key access
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
     
-    // Safety check for properties
     const topSourceStr = stats.topSource?.source || 'Data source tidak tersedia';
     const topAgentName = stats.topAgent?.name || 'Tidak ada agent aktif';
     const topAgentBookings = stats.topAgent?.bookings || 0;
@@ -29,16 +32,17 @@ export const getAIInsights = async (stats: any) => {
       Berikan 3 poin insight strategis dalam Bahasa Indonesia yang singkat, padat, dan profesional untuk meningkatkan penjualan bulan depan.
     `;
 
-    // Use gemini-3-pro-preview for complex reasoning tasks as per task type guidelines
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 
-    // Access the .text property directly (not as a method call) from the response
     return response.text || "Insight tidak dapat digenerate saat ini.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("AI Insights Error:", error);
-    return "Gagal memuat analisis AI. Pastikan API Key valid.";
+    if (error.message?.includes("API key not valid")) {
+      return "API Key yang dimasukkan tidak valid. Silakan cek kembali di Google AI Studio.";
+    }
+    return "Gagal menghubungkan ke AI. Silakan coba beberapa saat lagi.";
   }
 };
