@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { LeadData, FunnelStats, LeadClassification } from '../types';
 import { 
   Tooltip, ResponsiveContainer, Funnel, FunnelChart, LabelList,
-  BarChart, Bar, XAxis, YAxis, TooltipProps
+  BarChart, Bar, XAxis, YAxis
 } from 'recharts';
 import { 
   Calendar, Search, X, BarChart3, Info, TrendingUp, CloudOff, 
@@ -27,7 +27,7 @@ const formatCurrency = (value: number) => {
 };
 
 const Dashboard: React.FC<Props> = ({ leads }) => {
-  const [aiAnalysis, setAiAnalysis] = useState<string>('Menganalisis data kampanye dan sales...');
+  const [aiAnalysis, setAiAnalysis] = useState<string>('Menunggu data untuk dianalisis...');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -62,11 +62,11 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
     const visitedCount = leadsInPeriod.filter(l => l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')).length;
     const bookingCount = leadsInPeriod.filter(l => l.bookingDate !== null).length;
 
-    // Source Journey Logic
-    const sourceJourneyMap = new Map<string, { leads: number, visits: number, bookings: number, revenue: number }>();
+    // Source Logic
+    const sourceMap = new Map<string, { leads: number, visits: number, bookings: number, revenue: number }>();
     leadsInPeriod.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
-      const current = sourceJourneyMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
+      const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
       current.leads += 1;
       if (l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
         current.visits += 1;
@@ -75,10 +75,10 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
         current.bookings += 1;
         current.revenue += (l.revenueExclPpn || 0);
       }
-      sourceJourneyMap.set(s, current);
+      sourceMap.set(s, current);
     });
 
-    const sourceJourneyData = Array.from(sourceJourneyMap.entries()).map(([source, data]) => ({
+    const sourceJourneyData = Array.from(sourceMap.entries()).map(([source, data]) => ({
       source,
       leads: data.leads,
       visits: data.visits,
@@ -87,9 +87,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
       revenue: data.revenue
     })).sort((a, b) => b.leads - a.leads);
 
-    const sourceVisitEffectiveness = [...sourceJourneyData].sort((a, b) => b.visit_rate - a.visit_rate);
-
-    // Agent Ranking Logic
     const agentMap = new Map<string, { uniqueCount: number, visits: number, bookings: number, revenue: number }>();
     leadsInPeriod.forEach(l => {
       const agentName = String(l.agent || 'Unassigned').trim();
@@ -125,7 +122,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
       else classification.unclassified++;
     });
 
-    // Final Object Structure for both UI and AI
     return {
       status: "OK",
       funnel: {
@@ -138,7 +134,7 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
       } as FunnelStats,
       classification,
       sourceJourneyData,
-      sourceVisitEffectiveness,
+      sourceVisitEffectiveness: [...sourceJourneyData].sort((a, b) => b.visit_rate - a.visit_rate),
       agentRanking,
       revenuePeriod: leadsInPeriod.filter(l => l.bookingDate !== null).reduce((s, l) => s + (l.revenueExclPpn || 0), 0),
       topSource: { source: sourceJourneyData[0]?.source || '---' },
@@ -152,6 +148,7 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
 
   useEffect(() => {
     if (stats && stats.status === "OK") {
+      setAiAnalysis('Menyusun analisis strategis...');
       getAIInsights(stats).then(setAiAnalysis);
     }
   }, [stats]);
@@ -176,7 +173,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
 
   return (
     <div className="space-y-12 max-w-[1600px] mx-auto pb-20">
-      {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-slate-900">Leads Analyzer <span className="text-blue-600">Pro</span></h1>
@@ -190,14 +186,12 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
         </div>
       </div>
 
-      {/* Marketing Section */}
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg"><Megaphone size={20} /></div>
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Campaign Evaluation</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-blue-500">
              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Leads</div>
@@ -216,7 +210,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
              <div className="text-lg font-black truncate">{stats.topSource.source}</div>
            </div>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-8 flex items-center gap-2"><BarChart3 size={16}/> Volume Breakdown</h3>
@@ -233,7 +226,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
               </ResponsiveContainer>
             </div>
           </div>
-
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-8 flex items-center gap-2 text-emerald-600"><Zap size={16}/> Source to Visit Quality</h3>
             <div className="h-[400px]">
@@ -263,14 +255,12 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
         </div>
       </div>
 
-      {/* Sales Section */}
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-lg"><TrendingUp size={20} /></div>
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Sales & Revenue Performance</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
            <div className="lg:col-span-1 space-y-6">
               <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
@@ -297,7 +287,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
                 <div className="mt-4 flex items-center gap-2 text-emerald-100 font-bold text-xs"><ShoppingBag size={14}/> {stats.funnel.booking} Units Converted</div>
               </div>
            </div>
-
            <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
              <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-8">Lead Inventory Status</h3>
              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -320,8 +309,6 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
              </div>
            </div>
         </div>
-
-        {/* Agent Table */}
         <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl overflow-hidden mt-8">
            <h3 className="text-xl font-bold text-slate-800 mb-8">Sales Effectiveness Ranking</h3>
            <div className="overflow-x-auto">
@@ -365,14 +352,12 @@ const Dashboard: React.FC<Props> = ({ leads }) => {
         </div>
       </div>
 
-      {/* AI Summary - Di Paling Akhir */}
       <div className="space-y-6 pt-10">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-slate-900 text-white rounded-xl shadow-lg"><Sparkles size={20} /></div>
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">AI Executive Summary</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
-
         <div className="bg-gradient-to-br from-indigo-950 to-blue-900 p-10 rounded-[3rem] text-white flex flex-col relative overflow-hidden shadow-2xl">
           <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full -mr-40 -mt-40 blur-3xl"></div>
           <div className="flex items-center gap-5 mb-10 relative z-10">
