@@ -3,51 +3,32 @@
 
 Sistem ini mendukung pengambilan data langsung dari Google Sheets secara aman melalui Vercel Serverless Functions.
 
-## Langkah Konfigurasi Google Cloud
+## 🛠 Langkah Konfigurasi Google Cloud (Service Account)
 
-1. **Google Cloud Console**:
-   - Buka [Google Cloud Console](https://console.cloud.google.com/).
-   - Buat project baru atau pilih project yang sudah ada.
-   - Aktifkan **Google Sheets API**.
+1. **Google Cloud Console**: Aktifkan **Google Sheets API**.
+2. **Service Account**: Buat Service Account baru, unduh file **JSON Key**.
+3. **PENTING: Invite Email**:
+   - Buka file JSON yang Anda unduh.
+   - Cari baris `"client_email": "nama-akun@project.iam.gserviceaccount.com"`.
+   - Buka Google Sheet target Anda, klik **Share**, lalu masukkan email tersebut sebagai **Viewer**.
 
-2. **Service Account**:
-   - Buka menu **IAM & Admin > Service Accounts**.
-   - Klik **Create Service Account**.
-   - Beri nama (misal: `sheets-reader`) dan simpan.
-   - Setelah dibuat, klik pada email Service Account tersebut, buka tab **Keys**.
-   - Klik **Add Key > Create New Key > JSON**.
-   - File JSON akan terunduh. **Simpan file ini dengan aman!**
+## 🚀 Langkah Konfigurasi Vercel (Mengatasi Masalah Enter/Newline)
 
-3. **Share Spreadsheet**:
-   - Buka Google Sheet yang ingin digunakan.
-   - Klik tombol **Share**.
-   - Masukkan email Service Account (yang berakhiran `@...gserviceaccount.com`).
-   - Beri akses sebagai **Viewer**.
-
-## Langkah Konfigurasi Vercel
-
-1. Buka dashboard Vercel project Anda.
-2. Masuk ke **Settings > Environment Variables**.
-3. Tambahkan variable baru:
+1. Buka dashboard Vercel -> **Settings** -> **Environment Variables**.
+2. Tambahkan variable:
    - **Key**: `GOOGLE_SERVICE_ACCOUNT`
-   - **Value**: Copy dan paste seluruh isi file JSON yang Anda unduh tadi (termasuk tanda kurung kurawal `{}`).
-4. Pastikan juga `API_KEY` untuk Gemini sudah terpasang.
-5. Klik **Save** dan lakukan **Redeploy**.
+   - **Value**: 
+     - Buka file JSON Key pakai Notepad atau Text Editor.
+     - **Select All (Ctrl+A)** lalu **Copy (Ctrl+C)**.
+     - Langsung **Paste (Ctrl+V)** ke kotak "Value" di Vercel. 
+     - **Jangan edit apapun**, biarkan dia tetap berantakan/ada enter. Vercel akan menyimpannya dengan benar.
+3. Klik **Save**.
+4. **WAJIB REDEPLOY**:
+   - Pergi ke tab **Deployments**.
+   - Klik titik tiga `...` pada deployment terbaru Anda.
+   - Pilih **Redeploy**. (Tanpa redeploy, variable baru tidak akan terbaca oleh fungsi API).
 
-## Cara Penggunaan API
-
-Endpoint tersedia di: `/api/sheets?sheetId=YOUR_SPREADSHEET_ID&range=Sheet1!A1:Z`
-
-- `sheetId`: ID spreadsheet dari URL (string antara `/d/` dan `/edit`).
-- `range`: Range data dalam notasi A1 (default: `Sheet1!A1:Z`).
-
-Respon akan berupa JSON:
-```json
-{
-  "headers": ["Cust ID", "Nama Leads", "Agent", "Assigned"],
-  "rows": [
-    ["101", "John Doe", "Agent A", "2024-01-20"],
-    ["102", "Jane Smith", "Agent B", "2024-01-21"]
-  ]
-}
-```
+## 🔍 Cara Cek Jika Masih Error
+Jika muncul pesan `Missing service account credentials`:
+1. Cek apakah nama variablenya sudah tepat `GOOGLE_SERVICE_ACCOUNT` (semua huruf besar).
+2. Cek apakah Anda sudah klik **Redeploy** setelah menyimpan variable.

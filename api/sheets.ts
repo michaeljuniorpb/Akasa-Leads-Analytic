@@ -1,16 +1,8 @@
 
 import { google } from 'googleapis';
 
-/**
- * Serverless function to fetch data from Google Sheets securely.
- * Requires GOOGLE_SERVICE_ACCOUNT environment variable containing the Service Account JSON.
- * 
- * Query Parameters:
- * - sheetId: The Spreadsheet ID (found in URL)
- * - range: A1 notation range (e.g., 'Sheet1!A1:Z500')
- */
 export default async function handler(req: any, res: any) {
-  // Basic CORS support
+  // CORS setup
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -22,28 +14,39 @@ export default async function handler(req: any, res: any) {
   const { sheetId, range = 'Sheet1!A1:Z' } = req.query;
 
   if (!sheetId) {
-    return res.status(400).json({ 
-      error: 'Parameter "sheetId" is required.' 
-    });
+    return res.status(400).json({ error: 'Parameter "sheetId" diperlukan.' });
   }
 
   try {
     const serviceAccountString = process.env.GOOGLE_SERVICE_ACCOUNT;
     
-    if (!serviceAccountString) {
-      console.error('Environment variable GOOGLE_SERVICE_ACCOUNT is missing.');
+    if (!serviceAccountString || serviceAccountString.trim() === "") {
       return res.status(500).json({ 
-        error: 'Server configuration error: Missing service account credentials.' 
+        error: 'Variabel GOOGLE_SERVICE_ACCOUNT tidak ditemukan. 1. Pastikan di Vercel namanya GOOGLE_SERVICE_ACCOUNT. 2. Pastikan sudah klik REDEPLOY setelah save.' 
       });
     }
 
     let credentials;
     try {
-      credentials = JSON.parse(serviceAccountString);
-    } catch (parseErr) {
-      console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT JSON:', parseErr);
+      // Pembersihan string otomatis
+      let cleaned = serviceAccountString.trim();
+      
+      // Menangani kasus jika string ter-wrap kutip dua ekstra karena cara paste tertentu
+      if (cleaned.startsWith('"') && cleaned.endsWith('"') && !cleaned.includes('\n')) {
+         try {
+           cleaned = JSON.parse(cleaned);
+         } catch(e) {}
+      }
+
+      credentials = JSON.parse(cleaned);
+      
+      // Memperbaiki Private Key agar newline (\n) terbaca benar oleh library Google
+      if (credentials.private_key) {
+        credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+      }
+    } catch (parseErr: any) {
       return res.status(500).json({ 
-        error: 'Server configuration error: Invalid service account JSON format.' 
+        error: `Format JSON tidak valid. Pastikan Anda meng-copy seluruh isi file JSON dari { sampai }. Error: ${parseErr.message}` 
       });
     }
 
@@ -62,21 +65,24 @@ export default async function handler(req: any, res: any) {
     const values = response.data.values;
 
     if (!values || values.length === 0) {
-      return res.status(200).json({ 
-        headers: [], 
-        rows: [] 
-      });
+      return res.status(200).json({ headers: [], rows: [] });
     }
 
-    // Standard response format: Headers (first row) and Rows (rest)
     return res.status(200).json({
       headers: values[0],
       rows: values.slice(1),
     });
   } catch (error: any) {
     console.error('Google Sheets API Error:', error);
+    
+    if (error.code === 403) {
+      return res.status(403).json({ 
+        error: 'Akses Ditolak (403): Email Service Account (ada di dalam file JSON) belum di-invite ke Google Sheet. Klik tombol Share di Google Sheet Anda dan masukkan email tersebut sebagai Viewer.' 
+      });
+    }
+
     return res.status(500).json({ 
-      error: error.message || 'An internal error occurred while fetching sheet data.' 
+      error: `Gagal menarik data: ${error.message}` 
     });
   }
 }
