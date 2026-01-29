@@ -18,6 +18,8 @@ export interface LeadData {
   id: string;
   linkIklan: string;
   unique: boolean;
+  // Added uniqueRawStatus to track the original status string from the spreadsheet
+  uniqueRawStatus: string;
   sourceTracker: string;
   daysToVisit: number;
   daysToBooking: number;
@@ -39,6 +41,15 @@ export interface FunnelStats {
   prospect: number;
   visited: number;
   booking: number;
+}
+
+export interface LeadClassification {
+  cold: number;
+  prospect_warm: number;
+  booking: number;
+  junk: number;
+  drop: number;
+  unclassified: number;
 }
 
 export interface AgentPerformance {

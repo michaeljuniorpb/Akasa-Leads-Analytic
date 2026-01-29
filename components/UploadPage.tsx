@@ -6,6 +6,7 @@ import Papa from 'papaparse';
 import { mapRawToLead } from '../services/dataProcessor';
 import { saveLeadsToCloud } from '../services/firebaseService';
 import { LeadData } from '../types';
+// Corrected import for react-router-dom v6
 import { useNavigate } from 'react-router-dom';
 
 interface Props {

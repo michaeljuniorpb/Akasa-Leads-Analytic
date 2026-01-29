@@ -4,11 +4,10 @@ import {
   getFirestore, 
   collection, 
   getDocs, 
-  query, 
-  orderBy, 
   writeBatch, 
   doc, 
   Timestamp,
+  query,
   limit
 } from 'firebase/firestore';
 import { LeadData } from '../types';
@@ -24,44 +23,45 @@ const firebaseConfig = {
 };
 
 let db: any = null;
-
 try {
   const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
   db = getFirestore(app);
+  console.log("Firebase initialized successfully");
 } catch (e) {
-  console.warn("Firebase failed to initialize. Dashboard will run in offline mode.", e);
+  console.error("Firebase failed to initialize:", e);
 }
 
 const LEADS_COLLECTION = 'leads';
 
 export const saveLeadsToCloud = async (leads: LeadData[]) => {
-  if (!db) {
-    console.warn("Saving to memory only (Database not ready)");
-    return;
-  }
-  
+  if (!db) throw new Error("Database Firebase belum siap.");
   try {
-    const batch = writeBatch(db);
-    const colRef = collection(db, LEADS_COLLECTION);
-    
-    // Simpan 100 data terakhir saja untuk menjaga performa batch
-    const limitedLeads = leads.slice(0, 100);
-    
-    limitedLeads.forEach((lead) => {
-      const newDocRef = doc(colRef);
-      const serialized = JSON.parse(JSON.stringify(lead, (key, value) => 
-        value === undefined ? null : value
-      ));
+    const chunkSize = 400;
+    for (let i = 0; i < leads.length; i += chunkSize) {
+      const chunk = leads.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      const colRef = collection(db, LEADS_COLLECTION);
+      
+      chunk.forEach((lead) => {
+        const newDocRef = doc(colRef);
+        const toTimestamp = (d: Date | null) => (d instanceof Date && !isNaN(d.getTime())) ? Timestamp.fromDate(d) : null;
 
-      batch.set(newDocRef, {
-        ...serialized,
-        uploadedAt: Timestamp.now()
+        const dataToSave = {
+          ...lead,
+          assignedAt: toTimestamp(lead.assignedAt),
+          tanggalSiteVisit: toTimestamp(lead.tanggalSiteVisit),
+          bookingDate: toTimestamp(lead.bookingDate),
+          tanggalVisitAja: toTimestamp(lead.tanggalVisitAja),
+          uploadedAt: Timestamp.now()
+        };
+
+        batch.set(newDocRef, dataToSave);
       });
-    });
-
-    return await batch.commit();
+      await batch.commit();
+    }
   } catch (error) {
     console.error("Firestore Save Error:", error);
+    throw error;
   }
 };
 
@@ -69,17 +69,17 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
   if (!db) return [];
   try {
     const colRef = collection(db, LEADS_COLLECTION);
-    // Ambil 500 data terbaru saja agar loading tidak lama saat deployment
-    const q = query(colRef, orderBy('uploadedAt', 'desc'), limit(500));
+    const q = query(colRef, limit(3000));
     const querySnapshot = await getDocs(q);
     
     return querySnapshot.docs.map(docSnap => {
-      const data = docSnap.data();
+      // Fix: Cast docSnap.data() to any to avoid TypeScript unknown type errors on line 85 and lines 87-90
+      const data = docSnap.data() as any;
       const toDate = (ts: any) => {
         if (!ts) return null;
         if (ts instanceof Timestamp) return ts.toDate();
-        if (typeof ts === 'string' || typeof ts === 'number') return new Date(ts);
-        return null;
+        if (ts.seconds) return new Date(ts.seconds * 1000);
+        return new Date(ts);
       };
 
       return {
@@ -94,5 +94,49 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
   } catch (error) {
     console.error("Firestore Fetch Error:", error);
     return [];
+  }
+};
+
+export const deleteAllLeads = async () => {
+  if (!db) {
+    console.error("Delete failed: DB is null");
+    throw new Error("Koneksi Database (Firestore) tidak tersedia.");
+  }
+  
+  console.log("Memulai proses penghapusan data...");
+  
+  try {
+    const colRef = collection(db, LEADS_COLLECTION);
+    const snapshot = await getDocs(colRef);
+    
+    if (snapshot.empty) {
+      console.log("Database sudah kosong, tidak ada yang perlu dihapus.");
+      return;
+    }
+
+    const docs = snapshot.docs;
+    console.log(`Ditemukan ${docs.length} dokumen untuk dihapus.`);
+
+    const chunkSize = 450; 
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      
+      chunk.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      
+      console.log(`Menghapus batch ${Math.floor(i/chunkSize) + 1}...`);
+      await batch.commit();
+    }
+    
+    console.log("Semua data di Cloud Firestore berhasil dihapus.");
+  } catch (error: any) {
+    console.error("CRITICAL DELETE ERROR:", error);
+    // Jika error karena permission, beritahu user
+    if (error.code === 'permission-denied') {
+      throw new Error("Izin ditolak (Permission Denied). Pastikan 'Rules' di Firebase Console sudah diset ke 'allow read, write: if true;' untuk testing.");
+    }
+    throw new Error(`Gagal menghapus data: ${error.message || 'Unknown Error'}`);
   }
 };
