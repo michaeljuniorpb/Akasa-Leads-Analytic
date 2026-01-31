@@ -1,7 +1,7 @@
-
 import { GoogleGenAI } from "@google/genai";
 
 export const getAIInsights = async (stats: any) => {
+  // Use the API key directly from process.env.API_KEY as per guidelines
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined") {
@@ -14,7 +14,8 @@ export const getAIInsights = async (stats: any) => {
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    // Always use named parameter for apiKey during initialization
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const topSourceStr = stats.topSource?.source || 'Data source tidak tersedia';
     const topAgentName = stats.topAgent?.name || 'Tidak ada agent aktif';
@@ -32,11 +33,13 @@ export const getAIInsights = async (stats: any) => {
       Berikan 3 poin insight strategis dalam Bahasa Indonesia yang singkat, padat, dan profesional untuk meningkatkan penjualan bulan depan.
     `;
 
+    // Query GenAI with both the model name and prompt directly
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 
+    // Extract text output using the .text property (not a method) from GenerateContentResponse
     return response.text || "Insight tidak dapat digenerate saat ini.";
   } catch (error: any) {
     console.error("AI Insights Error:", error);

@@ -3,17 +3,17 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { LeadData, FunnelStats, LeadClassification } from '../types';
 import { 
-  Tooltip, ResponsiveContainer, Funnel, FunnelChart, LabelList,
-  BarChart, Bar, XAxis, YAxis
+  Tooltip, ResponsiveContainer, Funnel, FunnelChart, LabelList
 } from 'recharts';
 import { 
-  Calendar, Search, X, BarChart3, Info, TrendingUp, CloudOff, 
+  Calendar, Search, Info, TrendingUp, CloudOff, 
   ShoppingBag, Snowflake, Flame, Ban, Trash2, HelpCircle,
-  Megaphone, Zap, CheckCircle2, Sparkles, RefreshCw
+  Megaphone, CheckCircle2, Sparkles, RefreshCw
 } from 'lucide-react';
 import { getAIInsights } from '../services/geminiService';
 import { mapRawToLead } from '../services/dataProcessor';
 import { saveLeadsToCloud } from '../services/firebaseService';
+import Papa from 'papaparse';
 
 interface Props {
   leads: LeadData[];
@@ -35,7 +35,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
   const [endDate, setEndDate] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Check for stored Google Sheets settings
   const storedSheetId = localStorage.getItem('gsheet_id');
   const storedRange = localStorage.getItem('gsheet_range');
 
@@ -50,28 +49,46 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       return `${year}-${month}-${day}`;
     };
 
-    const leadsInPeriod = leads.filter(l => {
+    const isInRange = (d: Date | null): boolean => {
+      if (!d || isNaN(d.getTime())) return false;
       if (!startDate && !endDate) return true;
-      if (!l.assignedAt) return false;
-      const leadDateStr = formatDateToComparable(l.assignedAt);
-      if (startDate && leadDateStr < startDate) return false;
-      if (endDate && leadDateStr > endDate) return false;
+      const ds = formatDateToComparable(d);
+      if (startDate && ds < startDate) return false;
+      if (endDate && ds > endDate) return false;
       return true;
-    });
+    };
+
+    const leadsInPeriod = leads.filter(l => isInRange(l.assignedAt));
 
     if (leadsInPeriod.length === 0 && (startDate || endDate)) {
-      return { status: "NO_DATA" };
+      const hasActivity = leads.some(l => isInRange(l.bookingDate) || isInRange(l.tanggalSiteVisit));
+      if (!hasActivity) return { status: "NO_DATA" };
     }
 
     const rawCount = leadsInPeriod.length;
     const uniqueCount = leadsInPeriod.filter(l => 
       String(l.uniqueRawStatus).trim().toLowerCase() === 'unique'
     ).length;
+    
     const visitedCount = leadsInPeriod.filter(l => l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')).length;
     const bookingCount = leadsInPeriod.filter(l => l.bookingDate !== null).length;
 
-    // Source Logic
+    const periodVisitCount = leads.filter(l => 
+      isInRange(l.tanggalSiteVisit) && 
+      String(l.statusSiteVisit || '').toLowerCase().includes('visit done')
+    ).length;
+
+    const periodBookingCount = leads.filter(l => isInRange(l.bookingDate)).length;
+
+    const revenuePeriod = leads
+      .filter(l => isInRange(l.bookingDate))
+      .reduce((s, l) => s + (l.revenueExclPpn || 0), 0);
+
+    const visitPerformanceRatio = uniqueCount > 0 ? (periodVisitCount / uniqueCount) * 100 : 0;
+    const bookingPerformanceRatio = uniqueCount > 0 ? (periodBookingCount / uniqueCount) * 100 : 0;
+
     const sourceMap = new Map<string, { leads: number, visits: number, bookings: number, revenue: number }>();
+    
     leadsInPeriod.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
       const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
@@ -79,10 +96,14 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       if (l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
         current.visits += 1;
       }
-      if (l.bookingDate !== null) {
-        current.bookings += 1;
-        current.revenue += (l.revenueExclPpn || 0);
-      }
+      sourceMap.set(s, current);
+    });
+
+    leads.filter(l => isInRange(l.bookingDate)).forEach(l => {
+      const s = String(l.source || 'Unknown').trim() || 'Unknown';
+      const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
+      current.bookings += 1;
+      current.revenue += (l.revenueExclPpn || 0);
       sourceMap.set(s, current);
     });
 
@@ -96,6 +117,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
     })).sort((a, b) => b.leads - a.leads);
 
     const agentMap = new Map<string, { uniqueCount: number, visits: number, bookings: number, revenue: number }>();
+    
     leadsInPeriod.forEach(l => {
       const agentName = String(l.agent || 'Unassigned').trim();
       const isUnique = String(l.uniqueRawStatus).trim().toLowerCase() === 'unique';
@@ -105,12 +127,16 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
         if (l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
           current.visits += 1;
         }
-        if (l.bookingDate !== null) {
-          current.bookings += 1;
-          current.revenue += (l.revenueExclPpn || 0);
-        }
         agentMap.set(agentName, current);
       }
+    });
+
+    leads.filter(l => isInRange(l.bookingDate)).forEach(l => {
+      const agentName = String(l.agent || 'Unassigned').trim();
+      const current = agentMap.get(agentName) || { uniqueCount: 0, visits: 0, bookings: 0, revenue: 0 };
+      current.bookings += 1;
+      current.revenue += (l.revenueExclPpn || 0);
+      agentMap.set(agentName, current);
     });
 
     const agentRanking = Array.from(agentMap.entries()).map(([agent, data]) => {
@@ -144,13 +170,17 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       sourceJourneyData,
       sourceVisitEffectiveness: [...sourceJourneyData].sort((a, b) => b.visit_rate - a.visit_rate),
       agentRanking,
-      revenuePeriod: leadsInPeriod.filter(l => l.bookingDate !== null).reduce((s, l) => s + (l.revenueExclPpn || 0), 0),
+      revenuePeriod,
       topSource: { source: sourceJourneyData[0]?.source || '---' },
       topAgent: { name: agentRanking[0]?.agent || '---', bookings: agentRanking[0]?.bookings || 0 },
       topPerformance: {
         visit: [...agentRanking].sort((a, b) => b.visitRate - a.visitRate)[0]?.agent,
         booking: [...agentRanking].sort((a, b) => b.bookingFromVisitRate - a.bookingFromVisitRate)[0]?.agent
-      }
+      },
+      periodVisitCount,
+      periodBookingCount,
+      visitPerformanceRatio,
+      bookingPerformanceRatio
     };
   }, [leads, startDate, endDate]);
 
@@ -162,36 +192,74 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
   }, [stats]);
 
   const handleRefreshFromSheets = async () => {
-    if (!storedSheetId || isRefreshing) return;
+    const sheetIdToUse = storedSheetId || '1N_As68ZpxsDnJuxojt6Z_li65ZL918pXvyl0F_B53Tw';
+    const rangeToUse = storedRange || 'New Assign Leads!A1:AF';
     
+    if (isRefreshing) return;
     setIsRefreshing(true);
+    
     try {
-      const response = await fetch(`/api/sheets?sheetId=${storedSheetId}&range=${storedRange || 'Sheet1!A1:Z'}`);
-      const data = await response.json();
-      
-      if (!response.ok) throw new Error(data.error || 'Sync failed');
-      
+      const response = await fetch(`/api/sheets?sheetId=${sheetIdToUse}&range=${encodeURIComponent(rangeToUse)}`);
+      const responseText = await response.text();
+
+      // Jika HTML, berarti kita di preview dev server
+      if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+        await handleFallbackRefresh(sheetIdToUse, rangeToUse);
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        await handleFallbackRefresh(sheetIdToUse, rangeToUse);
+        return;
+      }
+
+      if (!response.ok) throw new Error(data.error || 'Refresh API Gagal');
+
       const { headers, rows } = data;
       const dataObjects = rows.map((row: any[]) => {
         const obj: any = {};
-        headers.forEach((h: string, i: number) => {
-          obj[h] = row[i];
-        });
+        headers.forEach((h: string, i: number) => { obj[h] = row[i]; });
         return obj;
       });
 
       const mapped = dataObjects.map(mapRawToLead);
       await saveLeadsToCloud(mapped);
-      
-      if (refreshData) {
-        await refreshData();
-      }
-      alert('Data Google Sheets berhasil diperbarui!');
+      if (refreshData) await refreshData();
     } catch (err: any) {
-      console.error(err);
-      alert('Gagal refresh data: ' + err.message);
+      console.warn("API Gagal, mencoba mode Fallback...");
+      await handleFallbackRefresh(sheetIdToUse, rangeToUse);
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  const handleFallbackRefresh = async (sId: string, r: string) => {
+    try {
+      const sheetName = r.includes('!') ? r.split('!')[0] : '';
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sId}/gviz/tq?tqx=out:csv${sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : ''}`;
+
+      const res = await fetch(csvUrl);
+      if (!res.ok) throw new Error('Pastikan Sheet di-set "Anyone with link can view"');
+      
+      const csvData = await res.text();
+      
+      Papa.parse(csvData, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          if (results.data && results.data.length > 0) {
+            const mapped = results.data.map(mapRawToLead);
+            await saveLeadsToCloud(mapped);
+            if (refreshData) await refreshData();
+          }
+        }
+      });
+    } catch (err: any) {
+      console.error("Fallback Sync Error:", err);
+      alert('Gagal Refresh: Untuk mode Preview, Google Sheet Anda harus di-Share sebagai "Anyone with link can view".');
     }
   };
 
@@ -221,16 +289,10 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
           <p className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2 mt-1"><Info size={12}/> Campaign & Sales Intelligence</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {storedSheetId && (
-            <button 
-              onClick={handleRefreshFromSheets}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl hover:bg-emerald-100 transition-all font-bold text-sm shadow-sm"
-            >
-              <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
-              {isRefreshing ? 'Refreshing...' : 'Refresh from Sheets'}
-            </button>
-          )}
+          <button onClick={handleRefreshFromSheets} disabled={isRefreshing} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl hover:bg-emerald-100 transition-all font-bold text-sm shadow-sm">
+            <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh from Sheets'}
+          </button>
           <div className="flex items-center gap-3 bg-white p-3 rounded-2xl shadow-sm border border-slate-200">
             <Calendar size={18} className="text-blue-500 ml-2" />
             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-semibold outline-none" />
@@ -246,66 +308,38 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Campaign Evaluation</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-blue-500">
-             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Leads</div>
+             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Leads In</div>
              <div className="text-3xl font-black text-slate-900">{stats.funnel.raw}</div>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Assigned At</p>
            </div>
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-indigo-500">
              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Unique Quality</div>
              <div className="text-3xl font-black text-slate-900">{stats.funnel.unique}</div>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Denominator for Ratios</p>
            </div>
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-emerald-500">
-             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Visit Ratio</div>
-             <div className="text-3xl font-black text-slate-900">{((stats.funnel.visited / (stats.funnel.unique || 1)) * 100).toFixed(1)}%</div>
+             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Visit Performance</div>
+             <div className="flex items-baseline gap-2">
+               <div className="text-3xl font-black text-slate-900">{stats.periodVisitCount}</div>
+               <div className="text-sm font-bold text-emerald-600">({stats.visitPerformanceRatio.toFixed(1)}%)</div>
+             </div>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Visit Date / Unique Assigned</p>
+           </div>
+           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-orange-500">
+             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Closing Performance</div>
+             <div className="flex items-baseline gap-2">
+               <div className="text-3xl font-black text-slate-900">{stats.periodBookingCount}</div>
+               <div className="text-sm font-bold text-orange-600">({stats.bookingPerformanceRatio.toFixed(1)}%)</div>
+             </div>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Booking Date / Unique Assigned</p>
            </div>
            <div className="bg-slate-900 p-6 rounded-3xl shadow-xl text-white">
              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Top Volume Source</div>
              <div className="text-lg font-black truncate">{stats.topSource.source}</div>
+             <p className="text-[9px] text-slate-500 font-bold mt-1">By Raw Lead Count</p>
            </div>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-8 flex items-center gap-2"><BarChart3 size={16}/> Volume Breakdown</h3>
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.sourceJourneyData} layout="vertical">
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="source" width={120} tick={{fontSize: 10, fontWeight: 700}} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{fill: '#f8fafc'}} />
-                  <Bar dataKey="leads" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={20}>
-                    <LabelList dataKey="leads" position="right" formatter={(v: any) => `${v} Leads`} style={{fontSize: 10, fontWeight: 800}} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-8 flex items-center gap-2 text-emerald-600"><Zap size={16}/> Source to Visit Quality</h3>
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.sourceVisitEffectiveness.slice(0, 10)} layout="vertical" margin={{ right: 80 }}>
-                  <XAxis type="number" hide domain={[0, 100]} />
-                  <YAxis type="category" dataKey="source" width={120} tick={{fontSize: 10, fontWeight: 700}} axisLine={false} tickLine={false} />
-                  <Bar dataKey="visit_rate" fill="#10b981" radius={[0, 8, 8, 0]} barSize={20}>
-                    <LabelList 
-                      dataKey="visit_rate" 
-                      position="right" 
-                      content={(props: any) => {
-                        const { x, y, width, value, index } = props;
-                        const visitCount = stats.sourceVisitEffectiveness[index]?.visits;
-                        return (
-                          <text x={x + width + 5} y={y + 14} fill="#065f46" fontSize={10} fontWeight={800}>
-                            {`${Number(value).toFixed(1)}% (${visitCount} Vst)`}
-                          </text>
-                        );
-                      }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -338,7 +372,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
               <div className="bg-emerald-600 p-8 rounded-3xl shadow-xl text-white">
                 <div className="text-[10px] font-black text-emerald-100 uppercase tracking-widest mb-1">Period Revenue</div>
                 <div className="text-3xl font-black">{formatCurrency(stats.revenuePeriod)}</div>
-                <div className="mt-4 flex items-center gap-2 text-emerald-100 font-bold text-xs"><ShoppingBag size={14}/> {stats.funnel.booking} Units Converted</div>
+                <div className="mt-4 flex items-center gap-2 text-emerald-100 font-bold text-xs"><ShoppingBag size={14}/> {stats.periodBookingCount} Units Converted</div>
               </div>
            </div>
            <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
@@ -425,10 +459,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
           </div>
           <div className="flex-1 bg-black/20 backdrop-blur-sm rounded-[2rem] p-10 text-xl leading-relaxed relative z-10 text-blue-50/90 italic font-medium whitespace-pre-wrap">
             {aiAnalysis}
-          </div>
-          <div className="mt-10 pt-8 border-t border-white/10 relative z-10 flex flex-wrap gap-6 text-[10px] font-black uppercase tracking-widest text-blue-300/60">
-            <span className="flex items-center gap-2"><CheckCircle2 size={12}/> Journey Evaluated</span>
-            <span className="flex items-center gap-2"><CheckCircle2 size={12}/> Performance Scored</span>
           </div>
         </div>
       </div>

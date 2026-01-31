@@ -2,7 +2,7 @@
 import { google } from 'googleapis';
 
 export default async function handler(req: any, res: any) {
-  // CORS setup
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,7 +11,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
-  const { sheetId, range = 'Sheet1!A1:Z' } = req.query;
+  const { sheetId, range = 'New Assign Leads!A1:AF' } = req.query;
 
   if (!sheetId) {
     return res.status(400).json({ error: 'Parameter "sheetId" diperlukan.' });
@@ -20,33 +20,25 @@ export default async function handler(req: any, res: any) {
   try {
     const serviceAccountString = process.env.GOOGLE_SERVICE_ACCOUNT;
     
-    if (!serviceAccountString || serviceAccountString.trim() === "") {
+    if (!serviceAccountString) {
       return res.status(500).json({ 
-        error: 'Variabel GOOGLE_SERVICE_ACCOUNT tidak ditemukan. 1. Pastikan di Vercel namanya GOOGLE_SERVICE_ACCOUNT. 2. Pastikan sudah klik REDEPLOY setelah save.' 
+        error: 'GOOGLE_SERVICE_ACCOUNT tidak ditemukan di Environment Variables.' 
       });
     }
 
     let credentials;
     try {
-      // Pembersihan string otomatis
-      let cleaned = serviceAccountString.trim();
-      
-      // Menangani kasus jika string ter-wrap kutip dua ekstra karena cara paste tertentu
-      if (cleaned.startsWith('"') && cleaned.endsWith('"') && !cleaned.includes('\n')) {
-         try {
-           cleaned = JSON.parse(cleaned);
-         } catch(e) {}
-      }
+      // Jika sudah berupa objek, gunakan langsung, jika string, parse ke JSON
+      credentials = typeof serviceAccountString === 'string' 
+        ? JSON.parse(serviceAccountString.trim()) 
+        : serviceAccountString;
 
-      credentials = JSON.parse(cleaned);
-      
-      // Memperbaiki Private Key agar newline (\n) terbaca benar oleh library Google
       if (credentials.private_key) {
         credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
       }
-    } catch (parseErr: any) {
+    } catch (parseErr) {
       return res.status(500).json({ 
-        error: `Format JSON tidak valid. Pastikan Anda meng-copy seluruh isi file JSON dari { sampai }. Error: ${parseErr.message}` 
+        error: 'Format JSON Service Account tidak valid.' 
       });
     }
 
@@ -64,25 +56,19 @@ export default async function handler(req: any, res: any) {
 
     const values = response.data.values;
 
-    if (!values || values.length === 0) {
-      return res.status(200).json({ headers: [], rows: [] });
-    }
-
+    // Pastikan respon selalu JSON yang bersih
     return res.status(200).json({
-      headers: values[0],
-      rows: values.slice(1),
+      headers: values && values.length > 0 ? values[0] : [],
+      rows: values && values.length > 1 ? values.slice(1) : [],
     });
   } catch (error: any) {
     console.error('Google Sheets API Error:', error);
     
-    if (error.code === 403) {
-      return res.status(403).json({ 
-        error: 'Akses Ditolak (403): Email Service Account (ada di dalam file JSON) belum di-invite ke Google Sheet. Klik tombol Share di Google Sheet Anda dan masukkan email tersebut sebagai Viewer.' 
-      });
-    }
-
-    return res.status(500).json({ 
-      error: `Gagal menarik data: ${error.message}` 
-    });
+    const statusCode = error.code === 403 ? 403 : 500;
+    const message = error.code === 403 
+      ? 'Akses Ditolak: Email Service Account belum di-Share di Google Sheets ini.' 
+      : `Google API Error: ${error.message}`;
+    
+    return res.status(statusCode).json({ error: message });
   }
 }
