@@ -8,7 +8,8 @@ import {
 import { 
   Calendar, Search, Info, TrendingUp, CloudOff, 
   ShoppingBag, Snowflake, Flame, Ban, Trash2, HelpCircle,
-  Megaphone, CheckCircle2, Sparkles, RefreshCw
+  Megaphone, CheckCircle2, Sparkles, RefreshCw, BarChart3,
+  Database, Layers
 } from 'lucide-react';
 import { getAIInsights } from '../services/geminiService';
 import { mapRawToLead } from '../services/dataProcessor';
@@ -107,14 +108,19 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       sourceMap.set(s, current);
     });
 
-    const sourceJourneyData = Array.from(sourceMap.entries()).map(([source, data]) => ({
-      source,
-      leads: data.leads,
-      visits: data.visits,
-      bookings: data.bookings,
-      visit_rate: data.leads > 0 ? (data.visits / data.leads) * 100 : 0,
-      revenue: data.revenue
-    })).sort((a, b) => b.leads - a.leads);
+    const totalLeadsInPeriod = leadsInPeriod.length;
+    const sourceJourneyData = Array.from(sourceMap.entries())
+      .map(([source, data]) => ({
+        source,
+        leads: data.leads,
+        visits: data.visits,
+        bookings: data.bookings,
+        visit_rate: data.leads > 0 ? (data.visits / data.leads) * 100 : 0,
+        share: totalLeadsInPeriod > 0 ? (data.leads / totalLeadsInPeriod) * 100 : 0,
+        revenue: data.revenue
+      }))
+      .filter(item => item.leads > 0 || item.visits > 0 || item.bookings > 0)
+      .sort((a, b) => b.leads - a.leads);
 
     const agentMap = new Map<string, { uniqueCount: number, visits: number, bookings: number, revenue: number }>();
     
@@ -180,7 +186,8 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       periodVisitCount,
       periodBookingCount,
       visitPerformanceRatio,
-      bookingPerformanceRatio
+      bookingPerformanceRatio,
+      totalLoadedLeads: leads.length
     };
   }, [leads, startDate, endDate]);
 
@@ -202,7 +209,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       const response = await fetch(`/api/sheets?sheetId=${sheetIdToUse}&range=${encodeURIComponent(rangeToUse)}`);
       const responseText = await response.text();
 
-      // Jika HTML, berarti kita di preview dev server
       if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
         await handleFallbackRefresh(sheetIdToUse, rangeToUse);
         return;
@@ -242,10 +248,9 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       const csvUrl = `https://docs.google.com/spreadsheets/d/${sId}/gviz/tq?tqx=out:csv${sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : ''}`;
 
       const res = await fetch(csvUrl);
-      if (!res.ok) throw new Error('Pastikan Sheet di-set "Anyone with link can view"');
+      if (!res.ok) throw new Error('Sheet Access Error');
       
       const csvData = await res.text();
-      
       Papa.parse(csvData, {
         header: true,
         skipEmptyLines: true,
@@ -259,7 +264,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       });
     } catch (err: any) {
       console.error("Fallback Sync Error:", err);
-      alert('Gagal Refresh: Untuk mode Preview, Google Sheet Anda harus di-Share sebagai "Anyone with link can view".');
     }
   };
 
@@ -286,7 +290,13 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
           <h1 className="text-3xl font-black text-slate-900">Leads Analyzer <span className="text-blue-600">Pro</span></h1>
-          <p className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2 mt-1"><Info size={12}/> Campaign & Sales Intelligence</p>
+          <div className="flex items-center gap-4 mt-1">
+            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Info size={12}/> Campaign & Sales Intelligence</p>
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md border border-indigo-100">
+               <Layers size={10} className="font-bold"/>
+               <span className="text-[10px] font-black uppercase tracking-wider">Scope: {stats.totalLoadedLeads.toLocaleString()} Recent Leads</span>
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={handleRefreshFromSheets} disabled={isRefreshing} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl hover:bg-emerald-100 transition-all font-bold text-sm shadow-sm">
@@ -308,6 +318,14 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Campaign Evaluation</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
+        
+        {stats.totalLoadedLeads >= 3000 && (
+           <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center gap-3 text-amber-800 mb-4">
+             <Info className="shrink-0" size={20} />
+             <p className="text-xs font-medium">Database mencapai limit tampilan (3.000 data terbaru). Jika Anda memiliki 10.000+ baris di Sheet, gunakan filter tanggal di atas untuk memfokuskan analisa pada periode tertentu saja agar angka akurat.</p>
+           </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-blue-500">
              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Leads In</div>
@@ -341,6 +359,56 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
              <p className="text-[9px] text-slate-500 font-bold mt-1">By Raw Lead Count</p>
            </div>
         </div>
+
+        {stats.sourceJourneyData.length > 0 && (
+          <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-8">
+             <div className="flex items-center gap-3 mb-8">
+               <BarChart3 className="text-blue-600" size={24} />
+               <h3 className="text-lg font-black text-slate-800">Source Performance Distribution</h3>
+             </div>
+             <div className="overflow-x-auto">
+               <table className="w-full">
+                 <thead>
+                   <tr className="border-b border-slate-100 text-left">
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 w-1/4">Source Channel</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Volume</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Share (%)</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Visit Rate</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Bookings</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {stats.sourceJourneyData.map((s, idx) => (
+                     <tr key={s.source} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                       <td className="py-4 px-4">
+                         <div className="font-bold text-slate-800">{s.source}</div>
+                       </td>
+                       <td className="py-4 px-4 text-center">
+                         <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 rounded-full font-black text-sm">{s.leads}</span>
+                       </td>
+                       <td className="py-4 px-4">
+                          <div className="flex flex-col gap-1.5 items-center">
+                            <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-indigo-500" style={{ width: `${s.share}%` }}></div>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400">{s.share.toFixed(1)}%</span>
+                          </div>
+                       </td>
+                       <td className="py-4 px-4 text-center">
+                          <div className="font-black text-slate-700">{s.visit_rate.toFixed(1)}%</div>
+                          <div className="text-[10px] text-slate-400 font-bold">{s.visits} Visit Done</div>
+                       </td>
+                       <td className="py-4 px-4 text-right">
+                         <div className="font-black text-emerald-600">{s.bookings} Units</div>
+                         <div className="text-[10px] text-slate-400 font-bold">{formatCurrency(s.revenue)}</div>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -397,47 +465,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
              </div>
            </div>
         </div>
-        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl overflow-hidden mt-8">
-           <h3 className="text-xl font-bold text-slate-800 mb-8">Sales Effectiveness Ranking</h3>
-           <div className="overflow-x-auto">
-             <table className="w-full text-left">
-               <thead>
-                 <tr className="border-b border-slate-100">
-                   <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Rank</th>
-                   <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Agent Name</th>
-                   <th className="py-4 px-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Visit (%)</th>
-                   <th className="py-4 px-2 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Bk/Vst (%)</th>
-                   <th className="py-4 px-4 text-right text-[10px] font-black uppercase tracking-widest text-slate-400">Revenue</th>
-                 </tr>
-               </thead>
-               <tbody>
-                 {stats.agentRanking.map((data, index) => (
-                   <tr key={data.agent} className={`border-b border-slate-50 hover:bg-slate-50/50 ${index < 3 ? 'bg-blue-50/10' : ''}`}>
-                     <td className="py-5 px-4">
-                       <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-xs font-black">#{index + 1}</div>
-                     </td>
-                     <td className="py-5 px-4">
-                       <div className="font-bold text-slate-800 text-sm">{data.agent}</div>
-                       <div className="flex gap-1 mt-1">
-                         {data.agent === stats.topPerformance.visit && <span className="bg-blue-100 text-blue-700 text-[8px] px-1.5 py-0.5 rounded font-black uppercase">Top Opener</span>}
-                         {data.agent === stats.topPerformance.booking && <span className="bg-emerald-100 text-emerald-700 text-[8px] px-1.5 py-0.5 rounded font-black uppercase">Top Closer</span>}
-                       </div>
-                     </td>
-                     <td className="py-5 px-2 text-center">
-                       <div className="text-sm font-black text-slate-700">{data.visitRate.toFixed(1)}%</div>
-                       <div className="text-[10px] text-slate-400 font-bold">{data.visits} Vst</div>
-                     </td>
-                     <td className="py-5 px-2 text-center">
-                       <div className="text-sm font-black text-emerald-600">{data.bookingFromVisitRate.toFixed(1)}%</div>
-                       <div className="text-[10px] text-slate-400 font-bold">{data.bookings} Bk</div>
-                     </td>
-                     <td className="py-5 px-4 text-right font-black text-slate-900 text-sm">{formatCurrency(data.revenue)}</td>
-                   </tr>
-                 ))}
-               </tbody>
-             </table>
-           </div>
-        </div>
       </div>
 
       <div className="space-y-6 pt-10">
@@ -448,15 +475,6 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
         </div>
         <div className="bg-gradient-to-br from-indigo-950 to-blue-900 p-10 rounded-[3rem] text-white flex flex-col relative overflow-hidden shadow-2xl">
           <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full -mr-40 -mt-40 blur-3xl"></div>
-          <div className="flex items-center gap-5 mb-10 relative z-10">
-            <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/20">
-              <Sparkles className="text-blue-200" size={32} />
-            </div>
-            <div>
-              <h3 className="text-2xl font-black tracking-tight leading-none">Strategic Insights</h3>
-              <p className="text-blue-300 text-xs font-bold uppercase tracking-widest mt-1.5">Rekomendasi Berbasis AI</p>
-            </div>
-          </div>
           <div className="flex-1 bg-black/20 backdrop-blur-sm rounded-[2rem] p-10 text-xl leading-relaxed relative z-10 text-blue-50/90 italic font-medium whitespace-pre-wrap">
             {aiAnalysis}
           </div>
