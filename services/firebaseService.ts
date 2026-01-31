@@ -70,8 +70,6 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
   if (!db) return [];
   try {
     const colRef = collection(db, LEADS_COLLECTION);
-    // Tambahkan ORDER BY uploadedAt DESC agar data terbaru yang tampil duluan
-    // Catatan: Jika ini pertama kali, Firestore mungkin meminta pembuatan Index via link di console.
     const q = query(
       colRef, 
       orderBy('uploadedAt', 'desc'), 
@@ -100,7 +98,6 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
     });
   } catch (error) {
     console.warn("Firestore Fetch Error (Possible Missing Index):", error);
-    // Fallback jika index belum dibuat: ambil tanpa sorting
     const fallbackQ = query(collection(db, LEADS_COLLECTION), limit(3000));
     const fallbackSnapshot = await getDocs(fallbackQ);
     return fallbackSnapshot.docs.map(docSnap => {
@@ -108,28 +105,58 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
       const toDate = (ts: any) => {
         if (!ts) return null;
         if (ts instanceof Timestamp) return ts.toDate();
+        if (ts.seconds) return new Date(ts.seconds * 1000);
         return new Date(ts);
       };
-      return { ...data, id: docSnap.id, assignedAt: toDate(data.assignedAt) } as any;
+      return { 
+        ...data, 
+        id: docSnap.id, 
+        assignedAt: toDate(data.assignedAt),
+        tanggalSiteVisit: toDate(data.tanggalSiteVisit),
+        bookingDate: toDate(data.bookingDate),
+        tanggalVisitAja: toDate(data.tanggalVisitAja)
+      } as LeadData;
     });
   }
 };
 
+/**
+ * Optimized iterative batch deletion for large collections.
+ * Fetches and deletes in small chunks to avoid memory issues and timeouts.
+ */
 export const deleteAllLeads = async () => {
   if (!db) throw new Error("Koneksi Database tidak tersedia.");
+  
   try {
+    let deletedTotal = 0;
     const colRef = collection(db, LEADS_COLLECTION);
-    const snapshot = await getDocs(colRef);
-    if (snapshot.empty) return;
-    const docs = snapshot.docs;
-    const chunkSize = 450; 
-    for (let i = 0; i < docs.length; i += chunkSize) {
-      const chunk = docs.slice(i, i + chunkSize);
+    
+    while (true) {
+      // Fetch only 500 documents at a time to stay within limits and save memory
+      const q = query(colRef, limit(500));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        console.log("Database is now empty.");
+        break;
+      }
+      
       const batch = writeBatch(db);
-      chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+      snapshot.docs.forEach((docSnap) => {
+        batch.delete(docSnap.ref);
+      });
+      
       await batch.commit();
+      deletedTotal += snapshot.size;
+      console.log(`Successfully deleted ${deletedTotal} documents so far...`);
+      
+      // Small delay to prevent rate limiting (optional but safe)
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
+    
+    return deletedTotal;
   } catch (error: any) {
+    console.error("Deletion Error:", error);
     throw new Error(`Gagal menghapus data: ${error.message}`);
   }
 };

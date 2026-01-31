@@ -48,12 +48,12 @@ const App: React.FC = () => {
 
     setIsDeleting(true);
     setConfirmDelete(false);
-    console.log("Reset data triggered...");
+    console.log("Reset data triggered for large dataset...");
     
     try {
-      await deleteAllLeads();
+      const count = await deleteAllLeads();
       setLeads([]); 
-      alert("Database Berhasil Dikosongkan!");
+      alert(`Database Berhasil Dikosongkan! (${count || 0} baris dihapus)`);
     } catch (err: any) {
       console.error("Reset Data Error:", err);
       alert(err.message || "Gagal menghapus data. Silakan cek konsol browser (F12) untuk detail.");

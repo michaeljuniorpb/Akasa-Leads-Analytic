@@ -56,16 +56,13 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
     setLoading(true);
     setError(null);
     setSuccess(false);
-    setSyncStatus('Menghubungkan ke Backend...');
+    setSyncStatus('Menghubungkan ke API...');
 
     try {
-      // 1. Coba lewat API Backend terlebih dahulu (Mode Vercel)
       const response = await fetch(`/api/sheets?sheetId=${sheetId}&range=${encodeURIComponent(range)}`);
       const responseText = await response.text();
       
-      // Jika respon adalah HTML (SPA redirect di lingkungan preview)
       if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-        console.warn("Backend API tidak aktif (Lingkungan Preview). Menggunakan mode Fallback Direct CSV...");
         await handleFallbackPull();
         return;
       }
@@ -74,17 +71,17 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
       try {
         data = JSON.parse(responseText);
       } catch (e) {
-        console.warn("Respon bukan JSON. Mencoba Fallback...");
         await handleFallbackPull();
         return;
       }
 
-      if (!response.ok) throw new Error(data.error || 'Gagal mengambil data dari API.');
+      if (!response.ok) throw new Error(data.error || 'Gagal mengambil data.');
 
       const { headers, rows } = data;
       const dataObjects = rows.map((row: any[]) => {
         const obj: any = {};
-        headers.forEach((h: string, i: number) => { obj[h] = row[i]; });
+        // Gunakan headers yang sudah dijamin baris 1 oleh API baru kita
+        headers.forEach((h: string, i: number) => { if(h) obj[h] = row[i]; });
         return obj;
       });
 
@@ -92,45 +89,44 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
       localStorage.setItem('gsheet_range', range);
       await processData(dataObjects);
     } catch (err: any) {
-      console.error("API Error, mencoba Fallback...", err);
       await handleFallbackPull();
     }
   };
 
   const handleFallbackPull = async () => {
-    setSyncStatus('Menarik data langsung (Mode Preview)...');
+    setSyncStatus('Menarik data (Mode Fallback)...');
     try {
-      // Ekstrak nama sheet
       const sheetName = range.includes('!') ? range.split('!')[0] : '';
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv${sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : ''}`;
+      
+      // Untuk fallback CSV, jika user pakai range kustom, kita harus ambil header baris 1 dulu
+      const headerUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv${sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : ''}&range=A1:AF1`;
+      const dataUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv${sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : ''}&range=${encodeURIComponent(range)}`;
 
-      const res = await fetch(csvUrl);
-      if (!res.ok) {
-        throw new Error('Gagal akses langsung. Pastikan Google Sheet sudah di-Share: "Anyone with the link can view"');
+      const [hRes, dRes] = await Promise.all([fetch(headerUrl), fetch(dataUrl)]);
+      if (!hRes.ok || !dRes.ok) throw new Error('Akses ditolak. Pastikan Sheet "Anyone with link can view".');
+      
+      const hCsv = await hRes.text();
+      const dCsv = await dRes.text();
+      
+      const headers = Papa.parse(hCsv).data[0] as string[];
+      let dataRows = Papa.parse(dCsv).data as any[][];
+
+      // Hilangkan header dari dataRows jika range-nya mulai dari A1
+      if (range.includes('A1:') || range.endsWith('!A1')) {
+        dataRows = dataRows.slice(1);
       }
-      
-      const csvData = await res.text();
-      
-      Papa.parse(csvData, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async (results) => {
-          if (results.data && results.data.length > 0) {
-            localStorage.setItem('gsheet_id', sheetId);
-            localStorage.setItem('gsheet_range', range);
-            await processData(results.data);
-          } else {
-            setError('Data Sheet ditemukan tapi kosong.');
-            setLoading(false);
-          }
-        },
-        error: (err) => {
-          setError('Gagal membaca format data: ' + err.message);
-          setLoading(false);
-        }
+
+      const dataObjects = dataRows.filter(row => row.length > 0).map(row => {
+        const obj: any = {};
+        headers.forEach((h, i) => { if(h) obj[h] = row[i]; });
+        return obj;
       });
+
+      localStorage.setItem('gsheet_id', sheetId);
+      localStorage.setItem('gsheet_range', range);
+      await processData(dataObjects);
     } catch (err: any) {
-      setError('Sinkronisasi Gagal. Karena sistem sedang dalam mode Preview, Anda HARUS men-set Google Sheet menjadi "Anyone with the link can view".');
+      setError('Sinkronisasi Gagal. Harap set akses Sheet menjadi "Anyone with the link can view" untuk mode ini.');
       setLoading(false);
     }
   };
@@ -163,7 +159,7 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
       };
       reader.readAsBinaryString(file);
     } else {
-      setError('Format file tidak didukung (.csv, .xlsx, .xls saja).');
+      setError('Format file tidak didukung.');
       setLoading(false);
     }
   };
@@ -200,7 +196,7 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Data Range</label>
-                <input type="text" value={range} onChange={e => setRange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-medium" />
+                <input type="text" placeholder="Contoh: A7000:AF" value={range} onChange={e => setRange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all font-medium" />
               </div>
               <button onClick={handleSheetsPull} disabled={loading} className={`w-full py-4 rounded-xl flex items-center justify-center gap-3 font-black uppercase tracking-widest text-xs shadow-lg transition-all ${loading ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95'}`}>
                 {loading ? <Loader2 className="animate-spin" size={20} /> : <Cloud size={20} />}
@@ -217,10 +213,10 @@ const UploadPage: React.FC<Props> = ({ onDataLoaded }) => {
           )}
           
           <div className="mt-8 p-4 bg-blue-50 rounded-xl text-[11px] text-blue-700 leading-relaxed border border-blue-100">
-            <p className="font-bold mb-1 uppercase tracking-wider">Tips Sinkronisasi:</p>
+            <p className="font-bold mb-1 uppercase tracking-wider">Tips Baris Banyak:</p>
             <ul className="list-disc ml-4 space-y-1">
-              <li>Pastikan Email Service Account Google Cloud Anda sudah di-Share ke Google Sheet (sebagai Viewer).</li>
-              <li>Jika mencoba di sistem Preview, ubah akses Google Sheet menjadi <strong>"Anyone with the link can view"</strong> agar data bisa ditarik tanpa backend.</li>
+              <li>Jika data Anda 10.000+ baris, gunakan range seperti <strong>A7000:AF</strong> untuk menarik data terbaru.</li>
+              <li>Sistem tetap akan menggunakan baris 1 sebagai nama kolom secara otomatis.</li>
             </ul>
           </div>
         </div>
