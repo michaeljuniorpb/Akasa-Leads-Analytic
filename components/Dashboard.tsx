@@ -9,7 +9,7 @@ import {
   Calendar, Search, Info, TrendingUp, CloudOff, 
   ShoppingBag, Snowflake, Flame, Ban, Trash2, HelpCircle,
   Megaphone, CheckCircle2, Sparkles, RefreshCw, BarChart3,
-  Database, Layers, Filter
+  Database, Layers, Filter, Users
 } from 'lucide-react';
 import { getAIInsights } from '../services/geminiService';
 import { mapRawToLead } from '../services/dataProcessor';
@@ -36,6 +36,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
   const [endDate, setEndDate] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showUniqueOnly, setShowUniqueOnly] = useState(false);
+  const [showUniqueOnlySales, setShowUniqueOnlySales] = useState(false);
 
   const storedSheetId = localStorage.getItem('gsheet_id');
   const storedRange = localStorage.getItem('gsheet_range');
@@ -60,6 +61,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       return true;
     };
 
+    // Filter leads assigned in the period (for volume/cohort base)
     const leadsInPeriod = leads.filter(l => isInRange(l.assignedAt));
 
     if (leadsInPeriod.length === 0 && (startDate || endDate)) {
@@ -72,46 +74,54 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       String(l.uniqueRawStatus).trim().toLowerCase() === 'unique'
     ).length;
     
-    const visitedCount = leadsInPeriod.filter(l => l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')).length;
-    const bookingCount = leadsInPeriod.filter(l => l.bookingDate !== null).length;
-
-    const periodVisitCount = leads.filter(l => 
+    // Top Stats logic (Activity Based)
+    const periodVisitLeads = leads.filter(l => 
       isInRange(l.tanggalSiteVisit) && 
       String(l.statusSiteVisit || '').toLowerCase().includes('visit done')
-    ).length;
+    );
+    const periodVisitCount = periodVisitLeads.length;
 
-    const periodBookingCount = leads.filter(l => isInRange(l.bookingDate)).length;
+    const periodBookingLeads = leads.filter(l => isInRange(l.bookingDate));
+    const periodBookingCount = periodBookingLeads.length;
 
-    const revenuePeriod = leads
-      .filter(l => isInRange(l.bookingDate))
-      .reduce((s, l) => s + (l.revenueExclPpn || 0), 0);
+    const revenuePeriod = periodBookingLeads.reduce((s, l) => s + (l.revenueExclPpn || 0), 0);
 
     const visitPerformanceRatio = uniqueCount > 0 ? (periodVisitCount / uniqueCount) * 100 : 0;
     const bookingPerformanceRatio = uniqueCount > 0 ? (periodBookingCount / uniqueCount) * 100 : 0;
 
+    // --- Source Performance Calculation (Activity Based for Activity Metrics) ---
     const sourceMap = new Map<string, { leads: number, visits: number, bookings: number, revenue: number }>();
     
-    // Filtering for Source Performance Distribution based on toggle
-    const filteredLeadsForSource = showUniqueOnly 
+    // 1. Volume: Leads assigned in period
+    const volumeLeadsSource = showUniqueOnly 
       ? leadsInPeriod.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
       : leadsInPeriod;
 
-    filteredLeadsForSource.forEach(l => {
+    volumeLeadsSource.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
       const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
       current.leads += 1;
-      if (l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
-        current.visits += 1;
-      }
       sourceMap.set(s, current);
     });
 
-    const bookingLeadsForSource = leads.filter(l => isInRange(l.bookingDate));
-    const filteredBookingLeads = showUniqueOnly
-      ? bookingLeadsForSource.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
-      : bookingLeadsForSource;
+    // 2. Visits: Activity in period
+    const activityVisitLeadsSource = showUniqueOnly
+      ? periodVisitLeads.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : periodVisitLeads;
 
-    filteredBookingLeads.forEach(l => {
+    activityVisitLeadsSource.forEach(l => {
+      const s = String(l.source || 'Unknown').trim() || 'Unknown';
+      const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
+      current.visits += 1;
+      sourceMap.set(s, current);
+    });
+
+    // 3. Bookings: Activity in period
+    const activityBookingLeadsSource = showUniqueOnly
+      ? periodBookingLeads.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : periodBookingLeads;
+
+    activityBookingLeadsSource.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
       const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
       current.bookings += 1;
@@ -119,7 +129,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       sourceMap.set(s, current);
     });
 
-    const totalLeadsForCalculation = filteredLeadsForSource.length;
+    const totalLeadsForSourceCalculation = volumeLeadsSource.length;
     const sourceJourneyData = Array.from(sourceMap.entries())
       .map(([source, data]) => ({
         source,
@@ -127,40 +137,86 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
         visits: data.visits,
         bookings: data.bookings,
         visit_rate: data.leads > 0 ? (data.visits / data.leads) * 100 : 0,
-        share: totalLeadsForCalculation > 0 ? (data.leads / totalLeadsForCalculation) * 100 : 0,
+        share: totalLeadsForSourceCalculation > 0 ? (data.leads / totalLeadsForSourceCalculation) * 100 : 0,
         revenue: data.revenue
       }))
       .filter(item => item.leads > 0 || item.visits > 0 || item.bookings > 0)
       .sort((a, b) => b.leads - a.leads);
 
-    const agentMap = new Map<string, { uniqueCount: number, visits: number, bookings: number, revenue: number }>();
+    // --- Sales Analysis Calculation (Activity Based for Activity Metrics) ---
+    const salesMap = new Map<string, { leads: number, visits: number, bookings: number }>();
     
-    leadsInPeriod.forEach(l => {
-      const agentName = String(l.agent || 'Unassigned').trim();
-      const isUnique = String(l.uniqueRawStatus).trim().toLowerCase() === 'unique';
-      if (isUnique) {
-        const current = agentMap.get(agentName) || { uniqueCount: 0, visits: 0, bookings: 0, revenue: 0 };
-        current.uniqueCount += 1;
-        if (l.tanggalSiteVisit !== null && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
-          current.visits += 1;
-        }
-        agentMap.set(agentName, current);
-      }
+    // 1. Volume: Leads assigned in period
+    const volumeLeadsSales = showUniqueOnlySales
+      ? leadsInPeriod.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : leadsInPeriod;
+
+    volumeLeadsSales.forEach(l => {
+      const agent = String(l.agent || 'Unassigned').trim();
+      const current = salesMap.get(agent) || { leads: 0, visits: 0, bookings: 0 };
+      current.leads += 1;
+      salesMap.set(agent, current);
     });
 
-    leads.filter(l => isInRange(l.bookingDate)).forEach(l => {
+    // 2. Visits: Activity in period
+    const activityVisitLeadsSales = showUniqueOnlySales
+      ? periodVisitLeads.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : periodVisitLeads;
+
+    activityVisitLeadsSales.forEach(l => {
+      const agent = String(l.agent || 'Unassigned').trim();
+      const current = salesMap.get(agent) || { leads: 0, visits: 0, bookings: 0 };
+      current.visits += 1;
+      salesMap.set(agent, current);
+    });
+
+    // 3. Bookings: Activity in period
+    const activityBookingLeadsSales = showUniqueOnlySales
+      ? periodBookingLeads.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : periodBookingLeads;
+
+    activityBookingLeadsSales.forEach(l => {
+      const agent = String(l.agent || 'Unassigned').trim();
+      const current = salesMap.get(agent) || { leads: 0, visits: 0, bookings: 0 };
+      current.bookings += 1;
+      salesMap.set(agent, current);
+    });
+
+    const salesAnalysisData = Array.from(salesMap.entries())
+      .map(([agent, data]) => ({
+        agent,
+        leads: data.leads,
+        visits: data.visits,
+        bookings: data.bookings,
+        visit_rate: data.leads > 0 ? (data.visits / data.leads) * 100 : 0
+      }))
+      .sort((a, b) => b.bookings - a.bookings || b.leads - a.leads);
+
+    // --- Agent Ranking for Top Badges (Stays Unique Based) ---
+    const agentBadgeMap = new Map<string, { uniqueCount: number, visits: number, bookings: number, revenue: number }>();
+    leadsInPeriod.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique').forEach(l => {
       const agentName = String(l.agent || 'Unassigned').trim();
-      const current = agentMap.get(agentName) || { uniqueCount: 0, visits: 0, bookings: 0, revenue: 0 };
+      const current = agentBadgeMap.get(agentName) || { uniqueCount: 0, visits: 0, bookings: 0, revenue: 0 };
+      current.uniqueCount += 1;
+      if (l.tanggalSiteVisit && isInRange(l.tanggalSiteVisit) && String(l.statusSiteVisit || '').toLowerCase().includes('visit done')) {
+        current.visits += 1;
+      }
+      agentBadgeMap.set(agentName, current);
+    });
+
+    periodBookingLeads.forEach(l => {
+      const agentName = String(l.agent || 'Unassigned').trim();
+      const current = agentBadgeMap.get(agentName) || { uniqueCount: 0, visits: 0, bookings: 0, revenue: 0 };
       current.bookings += 1;
       current.revenue += (l.revenueExclPpn || 0);
-      agentMap.set(agentName, current);
+      agentBadgeMap.set(agentName, current);
     });
 
-    const agentRanking = Array.from(agentMap.entries()).map(([agent, data]) => {
-      const visitRate = data.uniqueCount > 0 ? (data.visits / data.uniqueCount) * 100 : 0;
-      const bookingFromVisitRate = data.visits > 0 ? (data.bookings / data.visits) * 100 : 0;
-      return { agent, ...data, visitRate, bookingFromVisitRate };
-    }).sort((a, b) => b.bookings - a.bookings || b.visits - a.visits);
+    const agentRanking = Array.from(agentBadgeMap.entries()).map(([agent, data]) => ({
+      agent, ...data, 
+      visitRate: data.uniqueCount > 0 ? (data.visits / data.uniqueCount) * 100 : 0,
+      bookingFromVisitRate: data.visits > 0 ? (data.bookings / data.visits) * 100 : 0
+    })).sort((a, b) => b.bookings - a.bookings || b.visits - a.visits);
 
     const classification: LeadClassification = { cold: 0, prospect_warm: 0, booking: 0, junk: 0, drop: 0, unclassified: 0 };
     leadsInPeriod.forEach(l => {
@@ -178,14 +234,14 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       funnel: {
         raw: rawCount,
         unique: uniqueCount,
-        visited: visitedCount,
-        booking: bookingCount,
+        visited: periodVisitCount, // Activity based
+        booking: periodBookingCount, // Activity based
         qualified: classification.prospect_warm,
         prospect: classification.prospect_warm
       } as FunnelStats,
       classification,
       sourceJourneyData,
-      sourceVisitEffectiveness: [...sourceJourneyData].sort((a, b) => b.visit_rate - a.visit_rate),
+      salesAnalysisData,
       agentRanking,
       revenuePeriod,
       topSource: { source: sourceJourneyData[0]?.source || '---' },
@@ -200,7 +256,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       bookingPerformanceRatio,
       totalLoadedLeads: leads.length
     };
-  }, [leads, startDate, endDate, showUniqueOnly]);
+  }, [leads, startDate, endDate, showUniqueOnly, showUniqueOnlySales]);
 
   useEffect(() => {
     if (stats && stats.status === "OK") {
@@ -354,7 +410,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
                <div className="text-3xl font-black text-slate-900">{stats.periodVisitCount}</div>
                <div className="text-sm font-bold text-emerald-600">({stats.visitPerformanceRatio.toFixed(1)}%)</div>
              </div>
-             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Visit Date / Unique Assigned</p>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Activity in Range</p>
            </div>
            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-orange-500">
              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Closing Performance</div>
@@ -362,7 +418,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
                <div className="text-3xl font-black text-slate-900">{stats.periodBookingCount}</div>
                <div className="text-sm font-bold text-orange-600">({stats.bookingPerformanceRatio.toFixed(1)}%)</div>
              </div>
-             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Booking Date / Unique Assigned</p>
+             <p className="text-[9px] text-slate-400 font-bold mt-1">Based on Activity in Range</p>
            </div>
            <div className="bg-slate-900 p-6 rounded-3xl shadow-xl text-white">
              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Top Volume Source</div>
@@ -401,9 +457,9 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
                  <thead>
                    <tr className="border-b border-slate-100 text-left">
                      <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 w-1/4">Source Channel</th>
-                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Volume</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Volume (New)</th>
                      <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Share (%)</th>
-                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Visit Rate</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Visits (Activity)</th>
                      <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Bookings</th>
                    </tr>
                  </thead>
@@ -425,8 +481,8 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
                           </div>
                        </td>
                        <td className="py-4 px-4 text-center">
-                          <div className="font-black text-slate-700">{s.visit_rate.toFixed(1)}%</div>
-                          <div className="text-[10px] text-slate-400 font-bold">{s.visits} Visit Done</div>
+                          <div className="font-black text-slate-700">{s.visits} Done</div>
+                          <div className="text-[10px] text-slate-400 font-bold">{s.visit_rate.toFixed(1)}% Ratio</div>
                        </td>
                        <td className="py-4 px-4 text-right">
                          <div className="font-black text-emerald-600">{s.bookings} Units</div>
@@ -443,8 +499,75 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
 
       <div className="space-y-6">
         <div className="flex items-center gap-3">
+          <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-lg"><Users size={20} /></div>
+          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Sales Analysis</h2>
+          <div className="h-px flex-1 bg-slate-200 ml-4"></div>
+        </div>
+
+        {stats.salesAnalysisData.length > 0 && (
+          <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+               <div className="flex items-center gap-3">
+                 <TrendingUp className="text-emerald-600" size={24} />
+                 <h3 className="text-lg font-black text-slate-800">Sales Team Performance</h3>
+               </div>
+               
+               <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl w-fit">
+                 <button 
+                   onClick={() => setShowUniqueOnlySales(false)}
+                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${!showUniqueOnlySales ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   All Leads
+                 </button>
+                 <button 
+                   onClick={() => setShowUniqueOnlySales(true)}
+                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${showUniqueOnlySales ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <Filter size={12} />
+                   Unique Only
+                 </button>
+               </div>
+             </div>
+             
+             <div className="overflow-x-auto">
+               <table className="w-full">
+                 <thead>
+                   <tr className="border-b border-slate-100 text-left">
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 w-1/4">Agent Name</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Leads (New)</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Visits (Activity)</th>
+                     <th className="py-4 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Bookings</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {stats.salesAnalysisData.map((sa) => (
+                     <tr key={sa.agent} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                       <td className="py-4 px-4">
+                         <div className="font-bold text-slate-800">{sa.agent}</div>
+                       </td>
+                       <td className="py-4 px-4 text-center">
+                         <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full font-black text-sm">{sa.leads}</span>
+                       </td>
+                       <td className="py-4 px-4 text-center">
+                          <div className="font-black text-slate-700">{sa.visits} Visits</div>
+                          <div className="text-[10px] text-slate-400 font-bold">{sa.visit_rate.toFixed(1)}% Ratio</div>
+                       </td>
+                       <td className="py-4 px-4 text-right">
+                         <div className="font-black text-indigo-600">{sa.bookings} Units</div>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-lg"><TrendingUp size={20} /></div>
-          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Sales & Revenue Performance</h2>
+          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Overall Performance</h2>
           <div className="h-px flex-1 bg-slate-200 ml-4"></div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
