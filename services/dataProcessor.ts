@@ -34,25 +34,50 @@ export const parseNumber = (val: any): number => {
   
   let str = String(val).trim();
   
-  // Standardize potential Indonesian format from formulas (e.g. 1.500.000,50)
-  if (str.includes(',') && str.includes('.')) {
-    // Has both: assume Indo if comma is last (1.000,00) or US if dot is last (1,000.00)
+  // Deteksi format mata uang (ID vs US)
+  const hasComma = str.includes(',');
+  const hasDot = str.includes('.');
+
+  if (hasComma && hasDot) {
     const lastComma = str.lastIndexOf(',');
     const lastDot = str.lastIndexOf('.');
+    
     if (lastComma > lastDot) {
+      // Format Indonesia: 1.000.000,00 -> Hapus titik, ganti koma ke titik
       str = str.replace(/\./g, '').replace(',', '.');
     } else {
+      // Format US: 1,000,000.00 -> Hapus koma
       str = str.replace(/,/g, '');
     }
-  } else if (str.includes(',') && !str.includes('.')) {
-    // Only comma: check if it's thousands or decimals.
-    // In ID context, usually decimal if it's like 10,5.
-    // But if it's 1,000 it's US. Let's assume decimal if it's the formula result context.
-    str = str.replace(',', '.');
+  } else if (hasDot && !hasComma) {
+    // Hanya titik: Bisa jadi ribuan (1.500.000) atau desimal (150.50)
+    // Di konteks Rupiah, jika ada titik biasanya adalah ribuan, kecuali jika hanya ada 1 titik dan diikuti 2 angka di belakangnya.
+    // Namun untuk amannya, jika string mengandung lebih dari satu titik, itu pasti ribuan.
+    const dotCount = (str.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      str = str.replace(/\./g, '');
+    } else {
+      // Jika cuma 1 titik, cek apakah posisinya seperti desimal (misal .00 atau .5)
+      // Jika diikuti 3 angka (misal 500.000), maka itu ribuan
+      const parts = str.split('.');
+      if (parts[1] && parts[1].length === 3) {
+        str = str.replace(/\./g, '');
+      }
+      // Sebaliknya, biarkan titik sebagai desimal (parseFloat akan menanganinya)
+    }
+  } else if (hasComma && !hasDot) {
+    // Hanya koma: Biasanya desimal di Indonesia (150,50)
+    const commaCount = (str.match(/,/g) || []).length;
+    if (commaCount > 1) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(',', '.');
+    }
   }
 
   const clean = str.replace(/[^0-9.-]+/g, "");
-  return parseFloat(clean) || 0;
+  const result = parseFloat(clean);
+  return isNaN(result) ? 0 : result;
 };
 
 export const mapRawToLead = (row: any): LeadData => {
@@ -98,7 +123,6 @@ export const mapRawToLead = (row: any): LeadData => {
     nomor: String(getVal(['Nomor']) || ''),
     type: String(getVal(['Type (Auto)']) || ''),
     revenue: parseNumber(getVal(['Revenue (auto)'])),
-    // Mapping requested by user for formula result column
     revenueExclPpn: parseNumber(getVal(['Revenue exclude ppn (auto)'])),
     tanggalVisitAja: parseDate(getVal(['Tanggal Visit Aja'])),
     terhitungVisit: String(getVal(['Terhitung Visit'])).toLowerCase() === 'yes',

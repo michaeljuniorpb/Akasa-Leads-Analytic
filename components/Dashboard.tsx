@@ -369,6 +369,15 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
     selectedSales.length === 0 || selectedSales.includes(sa.agent)
   );
 
+  // Calculate totals for the Sales Analysis table
+  const salesTotals = displayedSalesAnalysis.reduce((acc, sa) => ({
+    leads: acc.leads + sa.leads,
+    visits: acc.visits + sa.visits,
+    bookings: acc.bookings + sa.bookings
+  }), { leads: 0, visits: 0, bookings: 0 });
+
+  const totalSalesVisitRate = salesTotals.leads > 0 ? (salesTotals.visits / salesTotals.leads) * 100 : 0;
+
   return (
     <div className="space-y-12 max-w-[1600px] mx-auto pb-20">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -575,6 +584,25 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
                      </tr>
                    )}
                  </tbody>
+                 {displayedSalesAnalysis.length > 0 && (
+                   <tfoot className="bg-slate-50/80">
+                     <tr className="border-t-2 border-slate-200">
+                       <td className="py-4 px-4 font-black text-slate-900 uppercase text-xs tracking-widest">TOTAL</td>
+                       <td className="py-4 px-4 text-center">
+                         <div className="text-lg font-black text-slate-900">{salesTotals.leads}</div>
+                         <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">New Leads</div>
+                       </td>
+                       <td className="py-4 px-4 text-center">
+                         <div className="text-lg font-black text-slate-900">{salesTotals.visits}</div>
+                         <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">{totalSalesVisitRate.toFixed(1)}% Overall Ratio</div>
+                       </td>
+                       <td className="py-4 px-4 text-right">
+                         <div className="text-lg font-black text-indigo-600">{salesTotals.bookings}</div>
+                         <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">Total Units</div>
+                       </td>
+                     </tr>
+                   </tfoot>
+                 )}
                </table>
              </div>
           </div>
