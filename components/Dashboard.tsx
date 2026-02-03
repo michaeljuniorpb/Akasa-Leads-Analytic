@@ -9,7 +9,7 @@ import {
   Calendar, Search, Info, TrendingUp, CloudOff, 
   ShoppingBag, Snowflake, Flame, Ban, Trash2, HelpCircle,
   Megaphone, CheckCircle2, Sparkles, RefreshCw, BarChart3,
-  Database, Layers
+  Database, Layers, Filter
 } from 'lucide-react';
 import { getAIInsights } from '../services/geminiService';
 import { mapRawToLead } from '../services/dataProcessor';
@@ -35,6 +35,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showUniqueOnly, setShowUniqueOnly] = useState(false);
 
   const storedSheetId = localStorage.getItem('gsheet_id');
   const storedRange = localStorage.getItem('gsheet_range');
@@ -90,7 +91,12 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
 
     const sourceMap = new Map<string, { leads: number, visits: number, bookings: number, revenue: number }>();
     
-    leadsInPeriod.forEach(l => {
+    // Filtering for Source Performance Distribution based on toggle
+    const filteredLeadsForSource = showUniqueOnly 
+      ? leadsInPeriod.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : leadsInPeriod;
+
+    filteredLeadsForSource.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
       const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
       current.leads += 1;
@@ -100,7 +106,12 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       sourceMap.set(s, current);
     });
 
-    leads.filter(l => isInRange(l.bookingDate)).forEach(l => {
+    const bookingLeadsForSource = leads.filter(l => isInRange(l.bookingDate));
+    const filteredBookingLeads = showUniqueOnly
+      ? bookingLeadsForSource.filter(l => String(l.uniqueRawStatus).trim().toLowerCase() === 'unique')
+      : bookingLeadsForSource;
+
+    filteredBookingLeads.forEach(l => {
       const s = String(l.source || 'Unknown').trim() || 'Unknown';
       const current = sourceMap.get(s) || { leads: 0, visits: 0, bookings: 0, revenue: 0 };
       current.bookings += 1;
@@ -108,7 +119,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       sourceMap.set(s, current);
     });
 
-    const totalLeadsInPeriod = leadsInPeriod.length;
+    const totalLeadsForCalculation = filteredLeadsForSource.length;
     const sourceJourneyData = Array.from(sourceMap.entries())
       .map(([source, data]) => ({
         source,
@@ -116,7 +127,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
         visits: data.visits,
         bookings: data.bookings,
         visit_rate: data.leads > 0 ? (data.visits / data.leads) * 100 : 0,
-        share: totalLeadsInPeriod > 0 ? (data.leads / totalLeadsInPeriod) * 100 : 0,
+        share: totalLeadsForCalculation > 0 ? (data.leads / totalLeadsForCalculation) * 100 : 0,
         revenue: data.revenue
       }))
       .filter(item => item.leads > 0 || item.visits > 0 || item.bookings > 0)
@@ -189,7 +200,7 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       bookingPerformanceRatio,
       totalLoadedLeads: leads.length
     };
-  }, [leads, startDate, endDate]);
+  }, [leads, startDate, endDate, showUniqueOnly]);
 
   useEffect(() => {
     if (stats && stats.status === "OK") {
@@ -362,10 +373,29 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
 
         {stats.sourceJourneyData.length > 0 && (
           <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm mt-8">
-             <div className="flex items-center gap-3 mb-8">
-               <BarChart3 className="text-blue-600" size={24} />
-               <h3 className="text-lg font-black text-slate-800">Source Performance Distribution</h3>
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+               <div className="flex items-center gap-3">
+                 <BarChart3 className="text-blue-600" size={24} />
+                 <h3 className="text-lg font-black text-slate-800">Source Performance Distribution</h3>
+               </div>
+               
+               <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl w-fit">
+                 <button 
+                   onClick={() => setShowUniqueOnly(false)}
+                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${!showUniqueOnly ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   All Leads
+                 </button>
+                 <button 
+                   onClick={() => setShowUniqueOnly(true)}
+                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${showUniqueOnly ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <Filter size={12} />
+                   Unique Only
+                 </button>
+               </div>
              </div>
+             
              <div className="overflow-x-auto">
                <table className="w-full">
                  <thead>
