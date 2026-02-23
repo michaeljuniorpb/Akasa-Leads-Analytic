@@ -305,7 +305,8 @@ const Dashboard: React.FC<Props> = ({ leads, refreshData }) => {
       });
 
       const mapped = dataObjects.map(mapRawToLead);
-      await saveLeadsToCloud(mapped);
+      const updatedCount = await saveLeadsToCloud(mapped, leads);
+      console.log(`Smart Sync: ${updatedCount} rows updated.`);
       if (refreshData) await refreshData();
     } catch (err: any) {
       console.warn("API Gagal, mencoba mode Fallback...");

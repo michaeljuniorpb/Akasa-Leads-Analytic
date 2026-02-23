@@ -33,18 +33,56 @@ try {
 
 const LEADS_COLLECTION = 'leads';
 
-export const saveLeadsToCloud = async (leads: LeadData[]) => {
+/**
+ * Saves leads to cloud using batch writes with Smart Sync logic.
+ * Only writes data that is actually new or has changed.
+ */
+export const saveLeadsToCloud = async (newLeads: LeadData[], existingLeads: LeadData[] = []) => {
   if (!db) throw new Error("Database Firebase belum siap.");
+  
   try {
+    // Create a map of existing leads for fast lookup
+    const existingMap = new Map(existingLeads.map(l => [l.id || `${l.custId}_${l.agent || 'NA'}`.replace(/[^a-zA-Z0-9]/g, '_'), l]));
+    
+    // Filter only leads that are new or have changed
+    const leadsToUpdate = newLeads.filter(lead => {
+      const uniqueId = lead.custId ? `${lead.custId}_${lead.agent || 'NA'}`.replace(/[^a-zA-Z0-9]/g, '_') : null;
+      if (!uniqueId) return true; // Always save if no unique ID
+      
+      const existing = existingMap.get(uniqueId);
+      if (!existing) return true; // New lead
+      
+      // Compare critical fields to detect changes
+      // You can add more fields here if needed
+      return (
+        existing.statusLeads !== lead.statusLeads ||
+        existing.statusSiteVisit !== lead.statusSiteVisit ||
+        existing.noAttempt !== lead.noAttempt ||
+        String(existing.remarks) !== String(lead.remarks) ||
+        (existing.tanggalSiteVisit?.getTime() !== lead.tanggalSiteVisit?.getTime()) ||
+        (existing.bookingDate?.getTime() !== lead.bookingDate?.getTime())
+      );
+    });
+
+    if (leadsToUpdate.length === 0) {
+      console.log("Smart Sync: No changes detected. Skipping write.");
+      return 0;
+    }
+
+    console.log(`Smart Sync: Writing ${leadsToUpdate.length} out of ${newLeads.length} leads.`);
+
     const chunkSize = 400;
     const now = Timestamp.now();
-    for (let i = 0; i < leads.length; i += chunkSize) {
-      const chunk = leads.slice(i, i + chunkSize);
+    
+    for (let i = 0; i < leadsToUpdate.length; i += chunkSize) {
+      const chunk = leadsToUpdate.slice(i, i + chunkSize);
       const batch = writeBatch(db);
       const colRef = collection(db, LEADS_COLLECTION);
       
       chunk.forEach((lead) => {
-        const newDocRef = doc(colRef);
+        const uniqueId = lead.custId ? `${lead.custId}_${lead.agent || 'NA'}`.replace(/[^a-zA-Z0-9]/g, '_') : null;
+        const newDocRef = uniqueId ? doc(colRef, uniqueId) : doc(colRef);
+        
         const toTimestamp = (d: Date | null) => (d instanceof Date && !isNaN(d.getTime())) ? Timestamp.fromDate(d) : null;
 
         const dataToSave = {
@@ -60,6 +98,7 @@ export const saveLeadsToCloud = async (leads: LeadData[]) => {
       });
       await batch.commit();
     }
+    return leadsToUpdate.length;
   } catch (error) {
     console.error("Firestore Save Error:", error);
     throw error;
@@ -70,6 +109,7 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
   if (!db) return [];
   try {
     const colRef = collection(db, LEADS_COLLECTION);
+    // Limit to 3000 to save "Read" quota on free tier
     const q = query(
       colRef, 
       orderBy('uploadedAt', 'desc'), 
@@ -122,7 +162,6 @@ export const fetchLeadsFromCloud = async (): Promise<LeadData[]> => {
 
 /**
  * Optimized iterative batch deletion for large collections.
- * Fetches and deletes in small chunks to avoid memory issues and timeouts.
  */
 export const deleteAllLeads = async () => {
   if (!db) throw new Error("Koneksi Database tidak tersedia.");
@@ -132,14 +171,10 @@ export const deleteAllLeads = async () => {
     const colRef = collection(db, LEADS_COLLECTION);
     
     while (true) {
-      // Fetch only 500 documents at a time to stay within limits and save memory
       const q = query(colRef, limit(500));
       const snapshot = await getDocs(q);
       
-      if (snapshot.empty) {
-        console.log("Database is now empty.");
-        break;
-      }
+      if (snapshot.empty) break;
       
       const batch = writeBatch(db);
       snapshot.docs.forEach((docSnap) => {
@@ -148,9 +183,6 @@ export const deleteAllLeads = async () => {
       
       await batch.commit();
       deletedTotal += snapshot.size;
-      console.log(`Successfully deleted ${deletedTotal} documents so far...`);
-      
-      // Small delay to prevent rate limiting (optional but safe)
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
